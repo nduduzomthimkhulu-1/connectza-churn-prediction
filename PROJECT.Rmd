@@ -1,0 +1,279 @@
+---
+title: "Mini Project 01"
+output:
+  html_document: default
+  pdf_document: default
+date: "2025-05-11"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## TASK 1 - DATA EXPLORATION AND PREPARATION 
+```{r}
+# 1.1)
+setwd("N:/BSc(Hons) Mathematics-2025/STAT420 - Quantitative Data Analysis/Mini Projects/Project_01/ConnectZa_Customer_Retention")
+rm(list = ls())
+customer.data <- read.csv("connectza_churn_data.csv", row.names = 1)
+str(customer.data)
+```
+\
+CustomerID:
+This is just a unique identifier for each customer. It’s useful for tracking, but it won’t help with prediction, so we won’t include it in modelling.
+Churn: 
+This is the main variable we’re trying to predict. A value of 1 means the customer left (churned), and 0 means they stayed. It’s a binary outcome.
+UsageFrequency: 
+This tells us how often a customer uses the service each week. I think lower usage could be a sign that the customer isn’t very engaged, which might increase their chances of leaving.
+SupportTickets: 
+This is the number of support queries raised in the last 3 months. A higher number here might suggest the customer is having problems, which could make them more likely to churn.
+Age:
+The age of the customer. This might influence how comfortable they are with tech or how likely they are to explore other providers.
+SubscriptionTier: 
+This shows whether the customer is on a Basic, Standard, or Premium plan. I expect Premium users might be less likely to leave since they’re paying more and probably getting better service.
+SatisfactionScore: 
+This is how satisfied customers said they were (on a scale of 1 to 10). It’s a direct measure of happiness with the service, so low scores here probably connect to a higher chance of churn.
+DataUsage_GB: 
+This is how much data the customer uses per month. People who use more data might depend more on the service and be less likely to switch providers.
+ContractDuration_Months: 
+This tells us how long their current contract is. I’d expect that customers with longer contracts are more “locked in” and therefore less likely to churn.
+\
+
+```{r}
+#1.2)
+#summary statistics for all variables(WITH VISUALISATION )
+summary(customer.data)
+churn_rate <- mean(customer.data$Churn) * 100
+churn_rate
+cat("Overall churn rate:", round(churn_rate, 1), "%\n")
+
+# Distributions that are  skewed 
+hist(customer.data$SupportTickets, 
+     main = "Distribution of Support Tickets",
+     xlab = "Number of Tickets",
+     col = "lightblue")
+
+hist(customer.data$DataUsage_GB, 
+     main = "Distribution of Data Usage",
+     xlab = "GB of Data Used",
+     col = "lightgreen")
+
+```
+\
+The Skewed Variable are SupportTickets and DataUsage_GB with right-skew (Which we will use the Log Transformation)
+```{r}
+#1.3
+#Churn and SubscriptionTier 
+#a)
+library(ggplot2)
+ggplot(customer.data, aes(x = SubscriptionTier, fill = factor(Churn))) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Proportion of Churn by Subscription Tier",
+    x = "Tier", 
+    y = "Proportion",
+    fill = "Churn Status"
+  ) +
+  scale_fill_manual(values = c("grey", "brown"), labels = c("Retained", "Churned")) +
+  theme_minimal()
+
+
+```
+\
+Basic tier likely shows higher churn. Premium customers often show lower churn due to better service value.
+\
+```{r}
+#Churn vs SatisfactionScore 
+library(ggplot2)
+
+ggplot(customer.data, aes(x = as.factor(Churn), y = SatisfactionScore, fill = as.factor(Churn))) +
+  geom_boxplot() +
+  labs(x = "Churn (0 = Stayed, 1 = Churned)", 
+       y = "Satisfaction Score", 
+       title = "Box Plot of Satisfaction Score by Churn Status",
+       fill = "Churn") + scale_fill_manual(values = c("grey","brown"))+
+  theme_minimal()
+```
+\
+Sharp increase in churn for scores below 5. Indicates dissatisfaction as a key churn driver. This supports the idea that customer satisfaction is closely linked to churn. ConnectZA should focus on improving satisfaction especially among those scoring below 5 to help reduce churn.
+\
+```{r}
+#c) 
+
+ggplot(customer.data, aes(x = as.factor(Churn), y = ContractDuration_Months, fill = as.factor(Churn))) +
+  geom_boxplot() +
+  labs(x = "Churn (0 = Stayed, 1 = Churned)", 
+       y = "Contract Duration (Months)", 
+       title = "Box Plot of Contract Duration  by Churn Status",
+       fill = "Churn") + scale_fill_manual(values = c("grey","brown"))+
+  theme_minimal()
+```
+\
+This box plot shows how long customers' contracts are depending on whether they stayed or left.
+Churned customers (Churn = 1) usually have shorter contracts.
+The median contract length is higher for those who stayed.Some customers with very short contracts are especially likely to churn—maybe they’re on month-to-month plans
+Customers nearing the end of their contracts are more likely to churn. ConnectZA could target them with renewal offers before they consider switching to a competitor.
+\
+```{r}
+#1.4
+library(corrplot)
+#we want to select numerical variables 
+num_vars <- customer.data[, sapply(customer.data, is.numeric)]
+# Calaculate correlation matrix
+cor_matrix <- cor(num_vars)
+cor_matrix
+
+corrplot(cor_matrix, method = "color", tl.cex = 0.8)
+
+
+```
+```{r}
+#1.5
+#Transforming the Skewed data : Log transformation
+customer.data$SupportTickets <- log(customer.data$SupportTickets + 1 ) # we add the1 to avoid log(0)
+customer.data$DataUsage_GB<- log(customer.data$DataUsage_GB +1 )
+
+#Partitioning the data into Train-test split.
+set.seed(42)
+n <- nrow(customer.data)
+p <- 0.7
+
+training.indices <- sample(seq(1, n), size = n * p)
+training.set <- customer.data[training.indices, ]
+test.set <- customer.data[-training.indices, ]
+
+```
+\
+One key ethical challenge in predicting customer churn is the risk of reinforcing socioeconomic bias. In South Africa’s diverse landscape, customers from rural or low-income communities may appear more likely to churn due to factors like lower usage or satisfaction, which could lead to their exclusion from retention efforts. This creates unfair outcomes and deepens inequality. To address this, ConnectZA should implement fairness-aware modelling by regularly checking for bias across demographic groups and ensuring that retention strategies include support for vulnerable customers. This approach promotes ethical, inclusive decision-making while still meeting business goals.
+\
+
+## TASK 2 - LINEAR PROBABILITY MODEL
+```{r}
+
+customer.data$SubscriptionTier <- as.factor(customer.data$SubscriptionTier)
+summary(customer.data$SubscriptionTier)
+
+```
+
+```{r}
+my.lpm <- lm(Churn ~ ., data = training.set)
+summary(my.lpm)
+
+```
+\
+The R-squared value is 0.2667 which tell us that about 27% percent of the variation in churn can be explained.
+The F-statistics is 31.24  and has a very small P-value (< 0.05) which tells us that the model is statistically significant, therefore atleast one of the predictor variables is meaningfully related to churn.
+\
+```{r}
+yhat <- predict(my.lpm, newdata = test.set)
+y <- test.set$Churn
+
+Prediction_outside <- sum(yhat < 0 | yhat > 1)
+Prediction_outside
+
+Prediction_outside_class <- ifelse(yhat > 0.5, 1, 0)
+conf_matrix <- table(Actual = test.set$Churn, Predicted = Prediction_outside_class)
+conf_matrix
+
+accuracy <- (conf_matrix[1,1] + conf_matrix[2,2]) / sum(conf_matrix)
+sensitivity <- conf_matrix[1,1] / sum(conf_matrix[1,])
+specificity <- conf_matrix[2,2] / sum(conf_matrix[2,])
+
+accuracy
+sensitivity
+specificity
+
+```
+\
+SatisfactionScore: A coefficient of -0.0419 implies higher satisfaction
+decreases churn likelihood each 1-point increase in satisfaction score reduces churn probability by 4.2% .Improving customer satisfaction could significantly reduce churn. ConnectZA should focus on improving service quality and customer experience.
+ContractDuration_Months: A coefficient of -0.0076 tells us that an additional month to a customers contract reduces their churn probability by around 0.76%. Then it clear that longer contracts help keep customers. ConnectZA could introduces maybe loyalty bonuses to customers to encourage longer commitments from them.
+THE LIMITATIONS OF THE LPM 
+The LPM can output values less than 0 or greater than 1, 
+which are not valid probabilities. 
+This leads to interpretation issues and 
+can result in poor prioritization of customers at risk of churn. For example a predicted value of 1.65 isn’t interpretable, and it may incorrectly flag a customer as extremely high risk
+The variance of residuals is not constant in LPMs, 
+and relationships may not be linear. This weakens the reliability of the estimated effects,
+making it harder for ConnectZA to make data-driven business decisions.
+This could lead to poor prioritization of retention resources. The company might focus too much on customers who aren’t actually at high risk while missing those who are, just because the model can’t capture complex relationships properly.
+Although the LPM is simple and interpretable, its mathematical limitations can reduce the accuracy and usefulness of predictions
+\
+
+## TASK 3 - LOGISTIC REGRESSION 
+```{r}
+MLR <- glm(Churn ~ ., data = training.set, family = binomial)
+summary(MLR)
+
+```
+\
+The above logistic regression model gives a better fit than the Linear Probability Model and avoids invalid predictions since it all the predicted values from this model will fall within the valid probability range [0,1]. which makes its appropriate for real world business decision.
+The areas in which the model highlights that Customer satisfaction (SatistfactionScore), Contract Duration (ContractDuration_Months) and, Support Experience are areas that ConnectZA should focus on to reduce Churn.
+\
+```{r}
+odds.ratios <- exp(coef(MLR))
+odds.table <- data.frame(OddsRatio = odds.ratios)
+odds.table
+
+```
+\
+The odds ratio for SupportTickets is 6.92, which means that for every extra support ticket a customer logs, their chances of churning are almost seven times higher. This shows that customers who face frequent problems are much more likely to leave. On the other hand, the odds ratio for SatisfactionScore is 0.56, so if a customer’s satisfaction score goes up by just one point, their likelihood of churning drops by about 44%. This proves how important it is for ConnectZA to keep customers happy and handle support issues properly to reduce churn.
+\
+```{r}
+#3.3
+yhat.predicted <- predict(MLR, newdata = test.set, type = "response")
+yhat.pred.class <- ifelse(yhat.predicted > 0.5, 1, 0)
+
+conf_matrix_mrl <- table(Actual = test.set$Churn, Predicted = yhat.pred.class)
+conf_matrix_mrl
+accuracy <- (conf_matrix_mrl[1,1] + conf_matrix_mrl[2,2]) / sum(conf_matrix_mrl)
+sensitivity <- conf_matrix_mrl[1,1] / sum(conf_matrix_mrl[1,])
+specificity <- conf_matrix_mrl[2,2] / sum(conf_matrix_mrl[2,])
+
+accuracy
+sensitivity
+specificity
+
+```
+
+## TASK 4 - LINEAR DICRIMINANT ANALYSIS 
+```{r}
+library(MASS)
+#4.1
+lda.model <- lda(Churn~., data = training.set)
+lda.model
+
+```
+\
+The LDA model shows that customers who churn tend to have shorter contracts, lower satisfaction scores, and more support issues compared to those who stay. For example, the average contract duration for churned customers is about 6.2 months, while it’s 16.6 months for those who stayed. Similarly, churned customers have a lower average satisfaction score (5.27 vs. 6.35) and raised more support tickets (1.57 vs. 0.96). These differences suggest that unhappy customers with frequent problems and weaker commitment are more likely to leave. The LDA coefficients also confirm this, with SupportTickets having the highest positive weight, meaning it strongly contributes to predicting churn. SatisfactionScore and ContractDuration_Months have large negative weights, which shows that higher satisfaction and longer contracts reduce the chance of churn. This means ConnectZA should focus on customers with poor support experiences, low satisfaction, and short contracts as they are the most at risk.
+\
+```{r}
+#4.2
+lda.model$means
+```
+\
+The group means from the LDA model reveal that the two most distinguishing variables between churned and non-churned customers are Age and ContractDuration_Months.Non-churned customers have an average age of approximately 48.92 years, while churned customers average 41.69 years, indicating that younger customers are more likely to churn—potentially due to greater awareness of competing offers or a higher willingness to switch providers. Additionally, customers who stayed had longer contract durations on average (10.62 months) compared to those who churned (7.06 months), suggesting that shorter contracts are associated with a higher risk of churn. These findings imply that ConnectZA should consider targeting younger customers with loyalty benefits and focus on retaining customers whose contracts are nearing expiration.
+\
+```{r}
+#4.3
+yhat.lda <- predict(lda.model,newdata=test.set)
+lda.classes <- yhat.lda$class
+summary(lda.classes)
+conf_matrix_lda <- table(Actual = test.set$Churn,Predicted = lda.classes )
+conf_matrix_lda
+accuracy <- (conf_matrix_lda[1,1] + conf_matrix_lda[2,2]) / sum(conf_matrix_lda)
+sensitivity <- conf_matrix_lda[1,1] / sum(conf_matrix_lda[1,])
+specificity <- conf_matrix_lda[2,2] / sum(conf_matrix_lda[2,])
+
+accuracy
+sensitivity
+specificity
+```
+
+## TASK 5 - MODEL COMPRASIONS AND BUSINESS RECOMMENDATIONS 
+```{r}
+Model.Coparison.Table <- data.frame( Model = c("Linear Probability Model (LPM)", "Logistic Regression", "Linear Discriminant Analysis (LDA)"), Accuracy = c(0.887, 0.893, 0.893), Sensitivity = c(0.996, 0.996, 0.974), Specificity = c(0.057, 0.343, 0.286))
+Model.Coparison.Table
+```
+ 
+ 

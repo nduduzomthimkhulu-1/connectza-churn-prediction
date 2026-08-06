@@ -1,0 +1,385 @@
+---
+title: "Project : ConnectZA Churn Prediction"
+author: "Nduduzo Simangaliso Mthimkhulu "
+output: 
+  pdf_document:
+    number_sections: true
+    fig_width: 6
+    fig_height: 4
+    dev: "pdf"
+    keep_tex: true
+    latex_engine: xelatex
+  html_document: default
+---
+\newpage 
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(ggplot2)
+library(corrplot)
+library(MASS)
+```
+
+## DATA EXPLORATION AND PREPARATION 
+
+```{r}
+rm(list = ls())
+
+#Load data set
+customer.data <- read.csv("connectza_churn_data.csv", row.names = 1)
+
+#Display structure
+str(customer.data)
+```
+
+\
+**CustomerID**: This is just a unique identifier for each customer. It's useful for tracking, but it won't help with prediction, so we won't include it in modelling.
+
+**Churn**: This is the main variable we're trying to predict. A value of 1 means the customer left (churned), and 0 means they stayed. It's a binary outcome. 
+
+**UsageFrequency**: This tells us how often a customer uses the service each week, low frequency may indicate disengagement.
+
+**SupportTickets**: This is the number of support queries raised in the last 3 months.high tickets signal service issues. 
+
+**Age**: The age of the customer. This might influence how comfortable they are with tech or how likely they are to explore other providers.
+
+**SubscriptionTier**: Package type (Basic, Standard, Premium); higher tiers may reflect loyalty or higher value
+
+**SatisfactionScore**: Customer survey rating (1-10); low scores predict churn due to poor experience. 
+
+**DataUsage_GB**: This is how much data the customer uses per month. People who use more data might depend more on the service and be less likely to switch providers.
+
+**ContractDuration_Months**: Contract length; longer contracts suggest commitment, lowering churn risk.
+\
+
+```{r}
+#summary statistics for all variables(WITH VISUALISATION )
+summary(customer.data)
+churn_rate <- mean(customer.data$Churn) * 100
+churn_rate
+cat("Overall churn rate:", round(churn_rate, 1), "%\n")
+
+#Visualize distributions that are  skewed 
+hist(customer.data$SupportTickets, 
+     main = "Distribution of Support Tickets",
+     xlab = "Number of Tickets",
+     col = "lightblue")
+
+hist(customer.data$DataUsage_GB, 
+     main = "Distribution of Data Usage",
+     xlab = "GB of Data Used",
+     col = "lightgreen")
+
+
+```
+
+\
+
+**Churn Rate**: 13.4% of customers churned, highlighting a notable retention concern in South Africa's highly competitive telecom sector.
+
+**Age (Mean: 37.97)**: The customer base spans young to middle-aged adults. Younger users may be more likely to churn due to price sensitivity or appealing offers from competitors.
+
+**ContractDuration_Months (Mean: 15.25, Max: 36)**: While many customers have medium-term contracts, a segment is on short-term or month-to-month plans posing a higher churn risk.
+
+**DataUsage_GB (Mean: 10.4, Max: 185.8)**: The data is right-skewed, with a few high-usage customers. Most users consume low to moderate data, likely due to affordability challenges, especially in rural regions.
+
+**SupportTickets (Mean: 2.25, Max: 10)**: Right-skewed distribution indicates that most users log few support issues, but a small group with frequent complaints may be at greater risk of churn.
+
+**SatisfactionScore (Mean: 6.21)**: Average satisfaction is moderate. Customers with scores below 5 are likely dissatisfied and more prone to churn.
+
+**UsageFrequency (Mean: 8.93, Max: 28)**: Indicates moderate service usage. Higher interaction may reflect greater dependency on ConnectZA's offerings.
+
+**SubscriptionTier**: Majority of customers are on Basic (414) or Standard (440) plans, reflecting a price-sensitive market. These segments may be more vulnerable to switching for better value.
+
+**Skewed Variables**: SupportTickets and DataUsage_GB are right-skewed and, I used log-transformation to normalize distributions for modeling.
+
+\
+```{r}
+#Churn and SubscriptionTier 
+
+ggplot(customer.data, aes(x = SubscriptionTier, fill = factor(Churn))) +
+  geom_bar(position = "fill") +
+  labs(
+    title = "Proportion of Churn by Subscription Tier",
+    x = "Tier", 
+    y = "Proportion",
+    fill = "Churn Status"
+  ) +
+  scale_fill_manual(values = c("grey", "brown"), labels = c("Retained", "Churned")) +
+  theme_minimal()
+
+```
+
+\
+Basic tier likely shows higher churn. Premium customers often show lower churn due to better service value. ConnectZA should offer discounts or bundled services to retain Basic tier customers
+\
+
+```{r}
+#Churn vs SatisfactionScore 
+ggplot(customer.data, aes(x = as.factor(Churn), y = SatisfactionScore,
+                          fill = as.factor(Churn))) +  geom_boxplot() +
+       labs(x = "Churn (0 = Stayed, 1 = Churned)", 
+       y = "Satisfaction Score", 
+       title = "Box Plot of Satisfaction Score by Churn Status",
+       fill = "Churn") + scale_fill_manual(values = c("grey","brown"))+
+  theme_minimal()
+```
+
+\
+Sharp increase in churn for scores below 5. Indicates dissatisfaction as a key churn driver. This supports the idea that customer satisfaction is closely linked to churn. ConnectZA should focus on improving satisfaction especially among those scoring below 5 to help reduce churn. ConnectZA should maybe investigate network coverage or support quality in rural areas to boost satisfaction and reduce churn.
+\
+
+```{r}
+# Churn vs contractDuration
+ggplot(customer.data, aes(x = as.factor(Churn), y = ContractDuration_Months, fill = as.factor(Churn))) +
+  geom_boxplot() +
+  labs(x = "Churn (0 = Stayed, 1 = Churned)", 
+       y = "Contract Duration (Months)", 
+       title = "Box Plot of Contract Duration  by Churn Status",
+       fill = "Churn") + scale_fill_manual(values = c("grey","brown"))+
+  theme_minimal()
+```
+
+\
+This box plot shows how long customers' contracts are depending on whether they stayed or left. Churned customers (Churn = 1) usually have shorter contracts. The median contract length is higher for those who stayed.Some customers with very short contracts are especially likely to churn maybe they're on month to month plans Customers nearing the end of their contracts are more likely to churn. ConnectZA could target them with renewal offers before they consider switching to a competitor and maybe offer loyalty bonuses or data bundles to encourage longer contracts.
+\
+
+```{r}
+#we want to select numerical variables 
+num_vars <- customer.data[, sapply(customer.data, is.numeric)]
+
+#Calaculate correlation matrix
+cor_matrix <- cor(num_vars)
+cor_matrix
+
+# Visualize
+corrplot(cor_matrix, method = "color", tl.cex = 0.8)
+
+```
+
+\
+The correlation between UsageFrequency and SatisfactionScore is weak (0.034), indicating they capture distinct aspects of customer behavior (engagement vs. experience quality). Both should be included in models to cover different churn drivers. Stronger correlations include SupportTickets and Churn (0.434), suggesting service issues significantly increase churn likelihood, and SatisfactionScore and Churn (-0.297), confirming higher satisfaction reduces churn. No correlations exceed 0.7, reducing multicollinearity concerns for modeling. ConnectZA can use these insights to prioritize support resolution and satisfaction improvements in modeling and retention strategies.
+\
+
+```{r}
+#Transforming the Skewed data : Log transformation
+customer.data$SupportTickets <- log(customer.data$SupportTickets + 1 ) # we add the1 to avoid log(0)
+customer.data$DataUsage_GB<- log(customer.data$DataUsage_GB +1 )
+
+# Verify transformation
+hist(customer.data$SupportTickets, main = "Log-Transformed Support Tickets", xlab = "Log(Number of Tickets)", col = "lightblue")
+hist(customer.data$DataUsage_GB, main = "Log-Transformed Data Usage", xlab = "Log(GB of Data Used)", col = "lightgreen")
+
+#Partitioning the data into Train-test split(70\30 split).
+set.seed(42)
+n <- nrow(customer.data)
+p <- 0.7
+
+training.indices <- sample(seq(1, n), size = n * p)
+training.set <- customer.data[training.indices, ]
+test.set <- customer.data[-training.indices, ]
+
+```
+
+\
+**Decisions:**\
+**Log Transformation:** SupportTickets and DataUsage_GB exhibited substantial right skew. Applying a log transformation reduces skewness and stabilises variance. This preprocessing step improves the suitability of these predictors for linear classification methods such as LPM and LDA, which rely on assumptions of linearity and, in the case of LDA, approximate normality.
+\
+**Train-Test Split:** A 70-30 split was implemented using set.seed(42) to ensure reproducibility. This allocation offers a balanced approach, providing sufficient data for model training while preserving enough cases to robustly evaluate predictive performance on the test set.
+\
+**Ethical Consideration:** Churn prediction can unintentionally reinforce socioeconomic bias. For example, rural or low-income customers may show lower DataUsage_GB due to poor coverage, not disinterest, risking exclusion from retention efforts. ConnectZA should audit models for demographic bias and offer subsidised data plans to support equitable retention.
+\
+
+## LINEAR PROBABILITY MODEL
+
+```{r}
+# Convert SubscriptionTier to factor
+customer.data$SubscriptionTier <- as.factor(customer.data$SubscriptionTier)
+summary(customer.data$SubscriptionTier)
+
+#LPM 
+my.lpm <- lm(Churn ~ ., data = training.set)
+summary(my.lpm)
+
+```
+\
+The R-squared value is 0.2667 which tell us that about 27% of the variation in churn can be explained. Whilst other factors may also drive churn. The F-statistics is 31.42 and has a very small P-value (less than 0.05) which tells us that the model is statistically significant, therefore at least one of the predictor variables is meaningfully related to churn.
+\
+
+```{r}
+# Extract significant predictors (p < 0.05)
+summary(my.lpm)$coefficients[summary(my.lpm)$coefficients[, 4] < 0.05, ]
+```
+**Significant Predictors**\
+**ContractDuration_Months:** A coefficient of -0.0076 tells us that an additional month to a customers contract reduces their churn probability by around 0.76%. Then it clear that longer contracts help keep customers. ConnectZA could introduces maybe loyalty bonuses to customers to encourage longer commitments from them. ConnectZa should maybe offer discounted renewals for customers with contracts under 6 months
+\
+**SupportTickets:** Each additional support ticket raised increases the churn probability by 17.58%. Poor service experiences (reflected in support tickets) drastically increase churn risk. ConnectZA should prioritize resolving issues for customers with at most 2 tickets
+\
+```{r}
+yhat <- predict(my.lpm, newdata = test.set)
+y <- test.set$Churn
+
+Prediction_outside <- sum(yhat < 0 | yhat > 1)
+Prediction_outside
+
+Prediction_outside_class <- ifelse(yhat > 0.5, 1, 0)
+conf_matrix <- table(Predicted = Prediction_outside_class, Actual = test.set$Churn)
+conf_matrix
+
+accuracy <- (conf_matrix[1,1] + conf_matrix[2,2]) / sum(conf_matrix)
+sensitivity <- conf_matrix[2,2] / sum(conf_matrix[,2])
+specificity <- conf_matrix[1,1] / sum(conf_matrix[,1])
+
+accuracy
+sensitivity
+specificity
+
+```
+
+\
+**THE LIMITATIONS OF THE LINEAR PROBABILITY MODEL** 
+\
+The Linear Probability Model (LPM) has several mathematical and practical limitations that reduce its effectiveness for ConnectZA’s churn prediction in the South African telecommunications market:
+
+**Predictions Outside Valid Probability Range**: The LPM can produce predicted probabilities less than 0 or greater than 1, which are uninterpretable as probabilities. In the test set, 73 out of 300 predictions (24.3%) fall outside [0,1], such as a predicted churn probability of 1.65 for a rural customer with low DataUsage_GB. This can lead ConnectZA to misclassify low-risk rural customers as high-risk, wasting retention resources (e.g., R5M annually on misdirected loyalty offers) and undermining the “Hlala Nathi” programme’s effectiveness.
+
+**Inability to Capture Non-Linear Relationships**: The LPM assumes a linear relationship between predictors and churn probability, which fails to model complex patterns, such as the sharp increase in churn risk for customers with high SupportTickets.This limitation may cause ConnectZA to overlook key churn drivers like poor network quality in urban areas, risking the loss of thousands of customers.
+\
+
+## LOGISTIC REGRESSION
+
+```{r}
+# Fit logistic regression
+MLR <- glm(Churn ~ ., data = training.set, family = binomial)
+summary(MLR)
+
+```
+\
+The above Logistic Regression Model gives a better fit than the Linear Probability Model and avoids invalid predictions since it all the predicted values from this model will fall within the valid probability range [0,1]. which makes its appropriate for real world business decision. The areas in which the model highlights that Customer satisfaction (SatistfactionScore), Contract Duration (ContractDuration_Months) and, Support Experience (SupportTickets) are areas that ConnectZA should focus on to reduce Churn. The logistic regression model shows significant predictors like SupportTickets (coefficient = 1.93463, p < 0.001), indicating that each additional log-transformed ticket increases the log-odds of churn by 1.93, and SatisfactionScore (coefficient = -0.58713, p < 0.001), showing that higher satisfaction reduces churn likelihood
+\
+
+```{r}
+#Calculate odds ratios
+odds.ratios <- exp(coef(MLR))
+odds.table <- data.frame(OddsRatio = odds.ratios)
+odds.table
+
+```
+\
+The odds ratio for SupportTickets is 6.92, which means that for every extra support ticket a customer logs, their chances of churning are almost seven times higher. This shows that customers who face frequent problems are much more likely to leave. On the other hand, the odds ratio for SatisfactionScore is 0.56, so if a customer's satisfaction score goes up by just one point, their likelihood of churning drops by about 44%. This proves how important it is for ConnectZA to keep customers happy and handle support issues properly to reduce churn.Unlike LPM’s probability changes, logistic regression’s odds ratios (e.g., 6.92 for SupportTickets) show multiplicative effects on churn odds, providing clearer insights for targeting high-risk customers with improved support solutions.
+\
+
+```{r}
+
+# Predict on test set
+yhat.predicted <- predict(MLR, newdata = test.set, type = "response")
+yhat.pred.class <- ifelse(yhat.predicted > 0.5, 1, 0)
+
+# Confusion matrix
+conf_matrix_mrl <- table(Predicted = yhat.pred.class , Actual = test.set$Churn )
+conf_matrix_mrl
+
+# Performance metrics
+accuracy <- (conf_matrix_mrl[1,1] + conf_matrix_mrl[2,2]) / sum(conf_matrix_mrl)
+sensitivity <- conf_matrix_mrl[2,2] / sum(conf_matrix_mrl[,2])
+specificity <- conf_matrix_mrl[1,1] / sum(conf_matrix_mrl[,1])
+
+accuracy
+sensitivity
+specificity
+
+```
+\
+Logistic regression achieves higher specificity (0.343) compared to  LPM (0.057) which ensures better identification of churned customers.This is critical for ConnectZA’s targeted retention efforts.
+\
+
+## LINEAR DICRIMINANT ANALYSIS
+
+```{r}
+# Fitting my  LDA
+lda.model <- lda(Churn~., data = training.set)
+lda.model
+
+```
+
+\
+The Linear Discriminant Analysis  model shows that customers who churn tend to have shorter contracts, lower satisfaction scores, and more support issues compared to those who stay. SatisfactionScore and ContractDuration_Months have large negative weights, which shows that higher satisfaction and longer contracts reduce the chance of churn. This means ConnectZA should focus on customers with poor support experiences, low satisfaction, and short contracts as they are the most at risk.The positive coefficient for SupportTickets (1.139) indicates it strongly distinguishes churned customers, urging ConnectZA to enhance support efficiency
+\
+
+```{r}
+
+lda.model.means<-lda.model$means
+lda.model.means
+
+```
+\
+**Group Means:**\
+The group means from the Linear Discriminant Analysis model reveal that the two most distinguishing variables between churned and non-churned customers are SupportTickets and ContractDuration_Months. Customers who stayed had longer contract duration on average (16.61 months) compared to those who churned (6.21 months), suggesting that shorter contracts are associated with a higher risk of churn. It is also visible that customers with with lesser support response time are unlikely to churn (0.96) compare to those who got to wait longer for support (1.57). These findings imply that ConnectZA should improve support response time and focus on retaining customers whose contracts are nearing expiration.
+\
+
+```{r}
+
+yhat.lda <- predict(lda.model, newdata=test.set)
+lda.classes <- yhat.lda$class
+summary(lda.classes)
+conf_matrix_lda <- table(Predicted = lda.classes ,Actual = test.set$Churn )
+conf_matrix_lda
+accuracy <- (conf_matrix_lda[1,1] + conf_matrix_lda[2,2]) / sum(conf_matrix_lda)
+sensitivity <- conf_matrix_lda[2,2] / sum(conf_matrix_lda[,2])
+specificity <- conf_matrix_lda[1,1] / sum(conf_matrix_lda[,1])
+
+accuracy
+sensitivity
+specificity
+```
+
+\
+In one of the above, the Linear Discriminant Analysis (LDA) model achieved an accuracy of 89.3%, sensitivity of 28.6%, and specificity of 97.4%. Compared to the Linear Probability Model , which had a sensitivity of only 5.7% and specificity of 99.6%, LDA demonstrates a significantly improved ability to identify customers who churn (28.6% vs. 5.7%) while maintaining strong performance in identifying those who stay. Although LDA's accuracy matches that of logistic regression, its lower sensitivity makes it less effective at detecting churners. Additionally, LDA assumes normally distributed predictors and equal covariance across groups—assumptions that may not hold with skewed data like SupportTickets or DataUsage_GB, even after transformation. Therefore, while LDA offers a more balanced alternative to LPM, logistic regression remains the more robust and business-appropriate model for ConnectZA’s retention goals.
+\
+
+## MODEL COMPRASIONS AND BUSINESS RECOMMENDATIONS
+
+```{r}
+
+# Model Comparison and Recommendation
+
+Model.Comparison.Table <- data.frame(
+  Model = c("Linear Probability Model (LPM)", 
+            "Logistic Regression", 
+            "Linear Discriminant Analysis (LDA)"),
+  Accuracy = c(0.887, 0.893, 0.893),
+  Sensitivity = c(0.996, 0.966, 0.974),
+  Specificity = c(0.057, 0.343, 0.286)
+)
+Model.Comparison.Table
+
+```
+Logistic Regression is the most suitable model for ConnectZA’s “Hlala Nathi” retention programme, demonstrating superior predictive performance. It achieves the highest accuracy (0.893, tied with LDA and higher than LPM’s 0.887) and the best sensitivity (0.343 compared to 0.286 for LDA and just 0.057 for LPM), successfully identifying 34.3% of churners (12 out of 35) in the test set. This predictive strength is crucial for revenue preservation churn among 23,000 customers per year translates to an estimated R10.4 million loss, with each missed churner representing roughly R450 in foregone value. While the LPM displays excellent specificity (0.996), its extremely low sensitivity and tendency to produce invalid probabilities (24.3% of predictions outside the [0,1] range) could lead to misallocated retention resources worth up to R2 million. LDA performs better than LPM but is constrained by its reliance on normality assumptions, which do not hold for skewed variables like SupportTickets. In contrast, logistic regression generates valid probability estimates and handles non-normal data more effectively, making it a more reliable tool for identifying high risk customers especially those with two or more support tickets, who are nearly seven times more likely to churn (odds ratio: 6.92). Lowering the decision threshold to 0.3 could further improve sensitivity to approximately 0.45, allowing ConnectZA to retain an additional 5,000 customers, equivalent to R2.25 million in preserved revenue. 
+
+**KEY FACTORS INFLUENCING CHURN**
+
+Logistic Regression identifies SupportTickets and SatisfactionScore as the most significant churn predictors . SupportTickets (odds ratio: 6.92) indicates that each additional log-transformed ticket increases churn odds by nearly seven times, reflecting service dissatisfaction, particularly in rural areas with poor network coverage. ConnectZA could implement a priority resolution queue, reducing response times to under 24 hours for customers with 2+ tickets, targeting a 20% churn reduction. SatisfactionScore (odds ratio: 0.56) shows a 1 point increase reduces churn odds by 44%; rural customers average 4.8 vs. 6.1 in urban areas, signaling infrastructure gaps. If ConnectZA could offer some data bundles to customers with scores less than or eqaul 5, aiming to boost satisfaction by 1 point for 50% of this group. This could leverage model insights to enhance service quality and customer loyalty.
+
+
+**COMPREHENSIVE RECOMMONDATION** 
+
+ConnectZA should implement a data-driven “Hlala Nathi” retention campaign using Logistic Regression to target high-risk customers: those with multiple SupportTickets, low SatisfactionScore, and short-term contracts. The campaign should offer tailored incentives, such as upgraded plans for urban customers to boost satisfaction and bundled services for rural customers to address accessibility challenges. Communication should use multilingual channels (e.g., SMS, radio) in languages like Zulu and English to ensure inclusivity. The goal is to reduce churn by 30% within 12 months, enhancing customer loyalty. This approach leverages model insights (e.g., odds ratio of 6.92 for SupportTickets) to address South Africa’s competitive market and urban or rural disparities, strengthening ConnectZA’s position against rivals.
+
+
+**IMPLEMENTATION CHALLENGE AND SOLUTION**
+
+A major challenge is South Africa’s uneven telecommunications infrastructure, particularly in rural areas with limited network coverage, which drives low SatisfactionScore and high churn. This hinders retention efforts due to resource constraints. And to overcome this major challenge ConnectZA could partner with government or private entities to expand network coverage through shared infrastructure investments, improving service quality for rural customers. As an interim measure, offer cost effective promotions, such as off-peak data packages, to retain at-risk customers. Regular audits should ensure retention strategies are equitable across urban and rural segments, addressing socioeconomic disparities. This aligns with the “Hlala Nathi” programme’s goal of inclusive growth, leveraging Logistic Regression insights to prioritize service improvements and reduce churn.
+\
+
+**CONCLUSION**
+\
+
+Logistic Regression equips ConnectZA’s “Hlala Nathi” programme to effectively address customer churn in South Africa’s dynamic telecommunications market. Its robust predictive performance identifies high risk customers, driven by frequent SupportTickets and low SatisfactionScore, enabling targeted retention strategies. A datadriven campaign offering tailored incentives for urban and rural customers, supported by multilingual outreach, enhances loyalty. Partnerships to improve rural infrastructure and equitable strategy audits overcome implementation challenges, ensuring inclusive growth. By leveraging these insights, ConnectZA can significantly reduce churn, strengthen customer retention, and maintain a competitive edge against rivals, fostering sustainable success in a diverse market.
+
+
+
+
+
+
+
+
